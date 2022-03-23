@@ -15,12 +15,12 @@ cpu_py38: &cpu_py38
     - image: cimg/python:3.8
   resource_class: large
 
-gpu_cu111: &gpu_cu111
+gpu_cu112: &gpu_cu112
   environment:
-    CUDA_VERSION: "11.1"
-    CUDA_HOME: /usr/local/cuda-11.1
+    CUDA_VERSION: "11.2"
+    CUDA_HOME: /usr/local/cuda-11.2
   machine:
-    image: ubuntu-1604-cuda-11.1:202012-01
+    image: ubuntu-2004-cuda-11.2:202103-01
     resource_class: gpu.nvidia.medium
 
 
@@ -71,7 +71,7 @@ install_dep: &install_dep
         # check if we have restored venv cache (/home/circleci/venv) correctly, if so, just skip
         if [ -f /home/circleci/venv/check_version.py ]; then python /home/circleci/venv/check_version.py torch gt 1.11 && exit 0; fi
         # start installing
-        pip install --progress-bar off --pre torch torchvision -f https://download.pytorch.org/whl/nightly/cu111/torch_nightly.html
+        pip install --progress-bar off --pre torch torchvision -f https://download.pytorch.org/whl/nightly/cu112/torch_nightly.html
         pip install --progress-bar off -r requirements-benchmark.txt
         pip install pytorch-lightning
 
@@ -83,7 +83,7 @@ install_dep_exp: &install_dep_exp
         if [ -f /home/circleci/venv/check_version.py ]; then python /home/circleci/venv/check_version.py torch gt 1.11 && exit 0; fi
 
         # start installing
-        pip install --progress-bar off --pre torch torchvision -f https://download.pytorch.org/whl/nightly/cu111/torch_nightly.html
+        pip install --progress-bar off --pre torch torchvision -f https://download.pytorch.org/whl/nightly/cu112/torch_nightly.html
         cd experimental
         pip install --progress-bar off -r requirements.txt
         pip install pytest
@@ -142,7 +142,7 @@ run_coverage: &run_coverage
   - run:
       name: Run Unit Tests With Coverage
       command: |
-        pytest --junitxml=test-results/junit.xml --verbose --timeout 600 --cov-report=xml --cov=./ tests
+        CUDA_LAUNCH_BLOCKING=1 pytest --junitxml=test-results/junit.xml --verbose --timeout 600 --cov-report=xml --cov=./ tests
         #Uploading test coverage for Python code
         bash <(curl -s https://codecov.io/bash) -f coverage.xml -cF Python
 
@@ -150,7 +150,7 @@ run_unittests: &run_unittests
   - run:
       name: Run Unit Tests
       command: |
-        pytest --junitxml=test-results/junit.xml --verbose --timeout 600 tests
+        CUDA_LAUNCH_BLOCKING=1 pytest --junitxml=test-results/junit.xml --verbose --timeout 600 tests
 
 run_experimental_unittests: &run_experimental_unittests
   - run:
@@ -268,7 +268,7 @@ jobs:
 
 
   gpu_tests:
-    <<: *gpu_cu111
+    <<: *gpu_cu112
 
     working_directory: ~/xformers
 
@@ -285,7 +285,7 @@ jobs:
       # Cache the venv directory that contains dependencies
       - restore_cache:
           keys:
-            - cache-key-gpu-111-{{ checksum "requirements-test.txt" }}-{{ checksum ".circleci/config.yml" }}
+            - cache-key-gpu-112-{{ checksum "requirements-test.txt" }}-{{ checksum ".circleci/config.yml" }}
 
       - <<: *install_dep
 
@@ -296,7 +296,7 @@ jobs:
       - save_cache:
           paths:
             - ~/venv
-          key: cache-key-gpu-111-{{ checksum "requirements-test.txt"}}-{{ checksum ".circleci/config.yml"}}
+          key: cache-key-gpu-112-{{ checksum "requirements-test.txt"}}-{{ checksum ".circleci/config.yml"}}
 
       - <<: *install_repo
 
@@ -312,7 +312,7 @@ jobs:
           path: test-results
 
   gpu_experimental_tests:
-    <<: *gpu_cu111
+    <<: *gpu_cu112
 
     working_directory: ~/xformers
 
@@ -329,7 +329,7 @@ jobs:
       # Cache the venv directory that contains dependencies
       - restore_cache:
           keys:
-            - cache-key-gpu-exp-111-{{ checksum "requirements-experimental.txt" }}-{{ checksum ".circleci/config.yml" }}
+            - cache-key-gpu-exp-112-{{ checksum "requirements-experimental.txt" }}-{{ checksum ".circleci/config.yml" }}
 
       - <<: *install_dep_exp
 
@@ -341,7 +341,7 @@ jobs:
       - save_cache:
           paths:
             - ~/venv
-          key: cache-key-gpu-exp-111-{{ checksum "requirements-experimental.txt"}}-{{ checksum ".circleci/config.yml"}}
+          key: cache-key-gpu-exp-112-{{ checksum "requirements-experimental.txt"}}-{{ checksum ".circleci/config.yml"}}
 
       - <<: *install_experimental_repo
       - <<: *run_experimental_unittests

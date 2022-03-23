@@ -20,8 +20,8 @@ except ImportError as e:
     blocksparse_softmax = None
 
 
-def _can_use_triton(a):
-    if a.device.type == "cpu":
+def _can_use_triton(a, b):
+    if a.device.type == "cpu" or b.device.type == "cpu":
         return False
 
     if blocksparse_matmul is None:
@@ -125,13 +125,13 @@ class BlockSparseTensor(torch.Tensor):
 
     def _initialize_triton_ops(self):
         block_size = self.__values.shape[-1]
-
         self.__sparse_dot_sdd = blocksparse_matmul(
             self.__layout,
             block_size,
             "sdd",
             trans_a=False,
             trans_b=True,
+            device=self.__layout.device,
         )
         self.__sparse_dot_dsd = blocksparse_matmul(
             self.__layout,
@@ -139,8 +139,11 @@ class BlockSparseTensor(torch.Tensor):
             "dsd",
             trans_a=False,
             trans_b=False,
+            device=self.__layout.device,
         )
-        self.__sparse_softmax = blocksparse_softmax(self.__layout, block_size)
+        self.__sparse_softmax = blocksparse_softmax(
+            self.__layout, block_size, device=self.__layout.device
+        )
 
     def __repr__(self):
         return f"block_sparse_tensor(shape={self.shape}, values={self.__values})"
@@ -172,7 +175,9 @@ class BlockSparseTensor(torch.Tensor):
     def _bmm(cls, arg0, arg1):
         if not (isinstance(arg0, cls) and type(arg1) == torch.Tensor):
             return NotImplemented
-        if _can_use_triton(arg1):
+        if _can_use_triton(arg1, arg0.__sparse_dot_dsd.layout):
+            # Triton requires all the tensors to be on GPU,
+            # which may not be the case depending on what layout was passed
             res = arg0.__sparse_dot_dsd(arg0.__values, arg1)
         else:
             res = _spmm(arg1, arg0.__layout, arg0.__values)
@@ -184,7 +189,7 @@ class BlockSparseTensor(torch.Tensor):
             return NotImplemented
         b = b.transpose(-2, -1)
         assert b.is_contiguous()
-        if _can_use_triton(a):
+        if _can_use_triton(a, mask.__sparse_dot_sdd):
             res = mask.__sparse_dot_sdd(a, b)
         else:
             res = _sddmm(a, b, mask.__layout)
@@ -194,7 +199,7 @@ class BlockSparseTensor(torch.Tensor):
     def _softmax(cls, arg0, dim):
         if not (dim == -1 or dim == 2):
             return NotImplemented
-        if _can_use_triton(arg0):
+        if _can_use_triton(arg0, arg0.__sparse_softmax):
             # TODO triton softmax performs an in-place operation
             # res = arg0.__sparse_softmax(arg0.__values)
             res = arg0.__sparse_softmax(arg0.__values.clone())
