@@ -289,8 +289,7 @@ class xFormer(torch.nn.Module):
                 x = torch.cat([memory, memory], dim=-1)
 
                 # TODO: pass in key and value independently.
-                kwargs = {"att_mask": encoder_input_mask}
-                x = encoders(x, **kwargs)
+                x = encoders(x, att_mask=encoder_input_mask)
                 memory = torch.stack(x.chunk(2, dim=-1)).mean(dim=0)
 
             if not self.decoders:

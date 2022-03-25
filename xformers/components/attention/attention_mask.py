@@ -30,7 +30,7 @@ class AttentionMask:
         if additive_mask.ndim == 2:
             additive_mask = additive_mask.unsqueeze(0)
 
-        self.values = additive_mask
+        self.values: torch.Tensor = additive_mask
         self.is_causal = is_causal
         self.seq_len = additive_mask.shape[1]
         self.to_seq_len = additive_mask.shape[0]
@@ -42,7 +42,7 @@ class AttentionMask:
         return self.values != float("-inf")
 
     @classmethod
-    def from_bool(cls: Type[Self], x: torch.Tensor) -> Self:
+    def from_bool(cls: Type[Self], x: torch.Tensor) -> "AttentionMask":
         """
         Create an AttentionMask given a boolean pattern.
         .. warning: we assume here that True implies that the value should be computed
@@ -53,22 +53,26 @@ class AttentionMask:
         additive_mask.masked_fill_(x, 0.0)
         additive_mask.masked_fill_(~x, float("-inf"))
 
-        return cls(additive_mask)
+        return cls(
+            additive_mask, is_causal=False
+        )  # The pattern can be random, so causal is not known
 
     @classmethod
-    def from_multiplicative(cls: Type[Self], x: torch.Tensor) -> Self:
+    def from_multiplicative(cls: Type[Self], x: torch.Tensor) -> "AttentionMask":
         """
         Create an AttentionMask given a multiplicative attention mask.
         """
         assert not x.dtype == torch.bool
 
         additive_mask = torch.empty_like(x, dtype=torch.float, device=x.device)
-        x = x.bool()
+        x = x.to(dtype=torch.bool)
 
         additive_mask.masked_fill_(x, 0.0)
         additive_mask.masked_fill_(~x, float("-inf"))
 
-        return cls(additive_mask)
+        return cls(
+            additive_mask, is_causal=False
+        )  # The pattern can be random, so causal is not known
 
     @classmethod
     def make_causal(
@@ -77,8 +81,8 @@ class AttentionMask:
         to_seq_len: Optional[int] = None,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
-    ) -> Self:
-        if not to_seq_len:
+    ) -> "AttentionMask":
+        if to_seq_len is None:
             to_seq_len = seq_len
 
         additive_mask = torch.triu(
@@ -94,7 +98,7 @@ class AttentionMask:
         Return a cropped attention mask, whose underlying tensor is a view of this one
         """
 
-        if not to_seq_len:
+        if to_seq_len is None:
             to_seq_len = seq_len
 
         return AttentionMask(
@@ -124,19 +128,20 @@ class AttentionMask:
     def shape(self):
         return self.values.shape
 
-    def __add__(self, other):
-        return AttentionMask(self.values + other.values, is_causal=False)
+    def __add__(self, other: "AttentionMask"):
+        mask: torch.Tensor = self.values + other.values
+        return AttentionMask(mask, is_causal=False)
 
     def to(
         self, device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None
     ) -> "AttentionMask":
-        assert device is None or isinstance(device, torch.device)
-        assert dtype is None or isinstance(dtype, torch.dtype)
-        assert device is not None or dtype is not None
+        # assert device is None or isinstance(device, torch.device)
+        # assert dtype is None or isinstance(dtype, torch.dtype)
+        # assert device is not None or dtype is not None
 
         # Noop if we don't need to create another instance
-        if ((device and device == self.device) or not device) and (
-            (dtype and dtype == self.dtype) or not dtype
+        if ((device is not None and device == self.device) or device is None) and (
+            (dtype is not None and dtype == self.dtype) or dtype is None
         ):
             return self
 
