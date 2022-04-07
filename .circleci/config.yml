@@ -15,12 +15,12 @@ cpu_py38: &cpu_py38
     - image: cimg/python:3.8
   resource_class: large
 
-gpu_cu111: &gpu_cu111
+gpu_cu114: &gpu_cu114
   environment:
-    CUDA_VERSION: "11.1"
-    CUDA_HOME: /usr/local/cuda-11.1
+    CUDA_VERSION: "11.4"
+    CUDA_HOME: /usr/local/cuda-11.4
   machine:
-    image: ubuntu-1604-cuda-11.1:202012-01
+    image: ubuntu-2004-cuda-11.4:202110-01
     resource_class: gpu.nvidia.medium
 
 
@@ -51,80 +51,110 @@ binary_common: &binary_common
 # -------------------------------------------------------------------------------------
 # Re-usable commands
 # -------------------------------------------------------------------------------------
-setup_venv: &setup_venv
+setup_conda: &setup_conda
   - run:
-      name: Setup Virtual Env
+      name: Setup Conda
       working_directory: ~/
       command: |
-        python -m venv ~/venv
-        echo ". ~/venv/bin/activate" >> $BASH_ENV
-        . ~/venv/bin/activate
-        python --version
-        which python
-        which pip
-        pip install --upgrade pip
+        cd /home/circleci
+        echo 'export MINICONDA=$HOME/miniconda' >>  $BASH_ENV
+        echo 'export PATH="$MINICONDA/bin:$PATH"' >>  $BASH_ENV
+
+        source $BASH_ENV
+        hash -r
+        wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh -O miniconda.sh
+        bash miniconda.sh -b -f -p $MINICONDA
+        conda config --set always_yes yes
+        conda update conda
+        conda info -a
+        conda create -p ~/venv python=3.9.0 pip  # pip is required here, else the system pip will be used
+        echo 'source activate /home/circleci/venv' >> $BASH_ENV
+        echo 'export VIRTUAL_ENV=$CONDA_PREFIX' >> $BASH_ENV  # make sure that pip knows we're in a venv already
+        source $BASH_ENV
+
 
 install_dep: &install_dep
   - run:
       name: Install Dependencies with torch nightly
       command: |
+        source $BASH_ENV
+
         # check if we have restored venv cache (/home/circleci/venv) correctly, if so, just skip
-        if [ -f /home/circleci/venv/check_version.py ]; then python /home/circleci/venv/check_version.py torch gt 1.11 && exit 0; fi
+        if [ -f /home/circleci/venv/check_version.py ]; then python3 /home/circleci/venv/check_version.py torch gt 1.11 && exit 0; fi
+
         # start installing
-        pip install --progress-bar off --pre torch torchvision -f https://download.pytorch.org/whl/nightly/cu111/torch_nightly.html
-        pip install --progress-bar off -r requirements-benchmark.txt
-        pip install pytorch-lightning
+        conda activate /home/circleci/venv
+        conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch-nightly -q
+        which python3
+        echo $VIRTUAL_ENV
+        pip install -r requirements-benchmark.txt --progress-bar off
+
+
+        # Mark install as complete
+        touch /home/circleci/miniconda/.finished
 
 install_dep_exp: &install_dep_exp
   - run:
       name: Install Dependencies for experimental tests
       command: |
+        source $BASH_ENV
+
         # check if we have restored venv cache (/home/circleci/venv) correctly, if so, just skip
-        if [ -f /home/circleci/venv/check_version.py ]; then python /home/circleci/venv/check_version.py torch gt 1.11 && exit 0; fi
+        if [ -f /home/circleci/venv/check_version.py ]; then python3  /home/circleci/venv/check_version.py torch gt 1.11 && exit 0; fi
 
         # start installing
-        pip install --progress-bar off --pre torch torchvision -f https://download.pytorch.org/whl/nightly/cu111/torch_nightly.html
-        cd experimental
-        pip install --progress-bar off -r requirements.txt
-        pip install pytest
+        conda activate /home/circleci/venv
+        conda install pytorch torchvision torchaudio cudatoolkit=11.3 -c pytorch-nightly -q
+        which python3
+        echo $VIRTUAL_ENV
+        pip install -r experimental/requirements.txt --progress-bar off
 
 install_repo: &install_repo
   - run:
       name: Install Repository
       command: |
+        source $BASH_ENV
+
         python3 -m pip install -e .
         # Test import.
-        python -c 'import sys; sys.path = sys.path[1:]; import xformers'
+        python3 -c 'import sys; sys.path = sys.path[1:]; import xformers'
 
 install_experimental_repo: &install_experimental_repo
   - run:
       name: Install Repository
       command: |
+        source $BASH_ENV
+
         cd experimental
         python3 -m pip install -e .
 
 run_isort: &run_isort
    - run:
-       name: Run Linter (isort)
-       command: |
-         isort . --check --profile black
+      name: Run Linter (isort)
+      command: |
+        source $BASH_ENV
+
+        isort . --check --profile black
 
 run_black: &run_black
    - run:
-       name: Run Linter (black)
-       command: |
-         black --check .
+      name: Run Linter (black)
+      command: |
+        source $BASH_ENV
+        black --check .
 
 run_mypy: &run_mypy
    - run:
        name: Run type-checking (mypy)
        command: |
-         mypy --ignore-missing-imports --scripts-are-modules --pretty --exclude build/ --exclude stubs/ .
+        source $BASH_ENV
+        mypy --ignore-missing-imports --scripts-are-modules --pretty --exclude build/ --exclude stubs/ .
 
 run_flake8: &run_flake8
   - run:
       name: Run Linter (flake8)
       command: |
+        source $BASH_ENV
         flake8 --config .flake8 --show-source --statistics
 
 run_clang_format: &run_clang_format
@@ -142,6 +172,7 @@ run_coverage: &run_coverage
   - run:
       name: Run Unit Tests With Coverage
       command: |
+        source $BASH_ENV
         pytest --junitxml=test-results/junit.xml --verbose --timeout 600 --cov-report=xml --cov=./ tests
         #Uploading test coverage for Python code
         bash <(curl -s https://codecov.io/bash) -f coverage.xml -cF Python
@@ -150,43 +181,49 @@ run_unittests: &run_unittests
   - run:
       name: Run Unit Tests
       command: |
+        source $BASH_ENV
         pytest --junitxml=test-results/junit.xml --verbose --timeout 600 tests
 
 run_experimental_unittests: &run_experimental_unittests
   - run:
       name: Run Unit Tests
       command: |
+        source $BASH_ENV
         pytest experimental/tests
 
 run_benchmarks: &run_benchmarks
   - run:
       name: Run Benchmarks
       command: |
+        source $BASH_ENV
         CUDA_LAUNCH_BLOCKING=1 python3 xformers/benchmarks/benchmark_encoder.py --activations gelu --plot -emb 128 -bs 16 -heads 4
 
 run_pytorch_benchmark: &run_pytorch_benchmark
   - run:
       name: Run Pytorch benchmark
       command: |
+        source $BASH_ENV
         python3 xformers/benchmarks/benchmark_pytorch_transformer.py
 
 run_vit_benchmark: &run_vit_benchmark
   - run:
       name: Run ViT Timm benchmark
       command: |
+        source $BASH_ENV
         python3 xformers/benchmarks/benchmark_vit_timm.py
         python3 xformers/benchmarks/benchmark_vit_timm.py --timm
 
 
 run_doc_build: &run_doc_build
    - run:
-       name: Testing doc build
-       command: |
-         cd docs
-         pip install --progress-bar off -r requirements.txt
-         make help
-         make singlehtml | tee make.out
-         ! tail make.out | grep -q warning
+      name: Testing doc build
+      command: |
+        source $BASH_ENV
+        cd docs
+        python3 -m pip install -r requirements.txt
+        make help
+        make singlehtml | tee make.out
+        ! tail make.out | grep -q warning
 
 commands:
     setup_pyenv:
@@ -200,7 +237,7 @@ commands:
               git clone -b master https://github.com/pyenv/pyenv-update.git $(pyenv root)/plugins/pyenv-update
               cd $(pyenv root); git checkout master; cd /home/circleci
               pyenv update
-              # figure out the latest python version given a subversion, like 3.8
+              # figure out the latest python3version given a subversion, like 3.8
               LATEST_PY_VERSION=$(pyenv install --list | sed 's/^  //' | grep -E '^[0-9].[0-9].[0-9]' | grep <<parameters.version>> | tail -1)
               pyenv install -f $LATEST_PY_VERSION
               pyenv global $LATEST_PY_VERSION
@@ -216,10 +253,13 @@ commands:
         - run:
             name: Check the installed PyTorch version
             command: |
-              python -c 'import torch; print("Torch version:", torch.__version__)'
-              python -c 'import torch; assert torch.__version__ > ( <<parameters.major>>,  <<parameters.minor>>), "wrong torch version"'
-              python -m torch.utils.collect_env
-              wget -O /home/circleci/venv/check_version.py https://raw.githubusercontent.com/min-xu-ai/check_verion/main/check_version.py
+              source $BASH_ENV
+              which python
+
+              python3 -c 'import torch; print("Torch version:", torch.__version__)'
+              python3 -c 'import torch; assert torch.__version__ > ( <<parameters.major>>,  <<parameters.minor>>), "wrong torch version"'
+              python3 -m torch.utils.collect_env
+              wget -O ~/venv/check_version.py https://raw.githubusercontent.com/min-xu-ai/check_verion/main/check_version.py
 
 
 # -------------------------------------------------------------------------------------
@@ -235,7 +275,7 @@ jobs:
     steps:
       - checkout
 
-      - <<: *setup_venv
+      - <<: *setup_conda
 
       # Cache the venv directory that contains dependencies
       - restore_cache:
@@ -250,7 +290,9 @@ jobs:
 
       - save_cache:
           paths:
+            - ~/miniconda
             - ~/venv
+
           key: cache-key-cpu-py38-{{ checksum "requirements-test.txt" }}-{{ checksum ".circleci/config.yml" }}
 
       - <<: *install_repo
@@ -268,7 +310,7 @@ jobs:
 
 
   gpu_tests:
-    <<: *gpu_cu111
+    <<: *gpu_cu114
 
     working_directory: ~/xformers
 
@@ -277,15 +319,15 @@ jobs:
 
       - run: nvidia-smi
 
-      - setup_pyenv:
-          version: 3.9.4
+      # - setup_pyenv:
+      #     version: 3.9.4
 
-      - <<: *setup_venv
+      - <<: *setup_conda
 
       # Cache the venv directory that contains dependencies
       - restore_cache:
           keys:
-            - cache-key-gpu-111-{{ checksum "requirements-test.txt" }}-{{ checksum ".circleci/config.yml" }}
+            - cache-key-gpu-114-{{ checksum "requirements-test.txt" }}-{{ checksum ".circleci/config.yml" }}
 
       - <<: *install_dep
 
@@ -295,8 +337,10 @@ jobs:
 
       - save_cache:
           paths:
+            - ~/miniconda
             - ~/venv
-          key: cache-key-gpu-111-{{ checksum "requirements-test.txt"}}-{{ checksum ".circleci/config.yml"}}
+
+          key: cache-key-gpu-114-{{ checksum "requirements-test.txt"}}-{{ checksum ".circleci/config.yml"}}
 
       - <<: *install_repo
 
@@ -312,7 +356,7 @@ jobs:
           path: test-results
 
   gpu_experimental_tests:
-    <<: *gpu_cu111
+    <<: *gpu_cu114
 
     working_directory: ~/xformers
 
@@ -321,15 +365,12 @@ jobs:
 
       - run: nvidia-smi
 
-      - setup_pyenv:
-          version: 3.9.4
-
-      - <<: *setup_venv
+      - <<: *setup_conda
 
       # Cache the venv directory that contains dependencies
       - restore_cache:
           keys:
-            - cache-key-gpu-exp-111-{{ checksum "requirements-experimental.txt" }}-{{ checksum ".circleci/config.yml" }}
+            - cache-key-gpu-exp-114-{{ checksum "experimental/requirements.txt" }}-{{ checksum ".circleci/config.yml" }}
 
       - <<: *install_dep_exp
 
@@ -340,8 +381,10 @@ jobs:
 
       - save_cache:
           paths:
+            - ~/miniconda
             - ~/venv
-          key: cache-key-gpu-exp-111-{{ checksum "requirements-experimental.txt"}}-{{ checksum ".circleci/config.yml"}}
+
+          key: cache-key-gpu-exp-114-{{ checksum "experimental/requirements.txt"}}-{{ checksum ".circleci/config.yml"}}
 
       - <<: *install_experimental_repo
       - <<: *run_experimental_unittests
@@ -372,17 +415,17 @@ jobs:
       - setup_pyenv:
           version: << parameters.python_version >>
 
-      - <<: *setup_venv
+      - <<: *setup_conda
       - run:
           name: Install dependencies + xformers from binary
           command: |
             set -ex
             echo "torch==${PYTORCH_VERSION}+${CU_VERSION}"
             export PYTORCH_CONSTRAINT="torch==${PYTORCH_VERSION}+${CU_VERSION}"
-            pip install --progress-bar off "${PYTORCH_CONSTRAINT}" -f https://download.pytorch.org/whl/torch_stable.html
-            pip install --progress-bar off numpy pytest
+            python3 -m pip install --progress-bar off "${PYTORCH_CONSTRAINT}" -f https://download.pytorch.org/whl/torch_stable.html
+            python3 -m pip install --progress-bar off numpy pytest
             echo $(ls ~/workspace)
-            pip install --progress-bar off $(ls -d ~/workspace/*)
+            python3 -m pip install --progress-bar off $(ls -d ~/workspace/*)
 
       - checkout
 
